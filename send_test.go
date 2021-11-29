@@ -2,6 +2,7 @@ package gomail
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"reflect"
 	"testing"
@@ -22,10 +23,10 @@ const (
 		testBody
 )
 
-type mockSender SendFunc
+type mockSender sendFunc
 
-func (s mockSender) Send(from string, to []string, msg io.WriterTo) error {
-	return s(from, to, msg)
+func (s mockSender) Send(ctx context.Context, from string, to []string, msg io.WriterTo) error {
+	return s(ctx, from, to, msg)
 }
 
 type mockSendCloser struct {
@@ -45,7 +46,7 @@ func TestSend(t *testing.T) {
 			return nil
 		},
 	}
-	if err := Send(s, getTestMessage()); err != nil {
+	if err := sendAll(context.TODO(), s, getTestMessage()); err != nil {
 		t.Errorf("Send(): %v", err)
 	}
 }
@@ -60,7 +61,7 @@ func getTestMessage() *Message {
 }
 
 func stubSend(t *testing.T, wantFrom string, wantTo []string, wantBody string) mockSender {
-	return func(from string, to []string, msg io.WriterTo) error {
+	return func(ctx context.Context, from string, to []string, msg io.WriterTo) error {
 		if from != wantFrom {
 			t.Errorf("invalid from, got %q, want %q", from, wantFrom)
 		}

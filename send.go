@@ -1,41 +1,41 @@
 package gomail
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/mail"
 )
 
-// Sender is the interface that wraps the Send method.
+// sender is the interface that wraps the Send method.
 //
 // Send sends an email to the given addresses.
-type Sender interface {
-	Send(from string, to []string, msg io.WriterTo) error
+type sender interface {
+	Send(ctx context.Context, from string, to []string, msg io.WriterTo) error
 }
 
-// SendCloser is the interface that groups the Send and Close methods.
-type SendCloser interface {
-	Sender
+// sendCloser is the interface that groups the Send and Close methods.
+type sendCloser interface {
+	sender
 	Close() error
 }
 
-// A SendFunc is a function that sends emails to the given addresses.
+// A sendFunc is a function that sends emails to the given addresses.
 //
-// The SendFunc type is an adapter to allow the use of ordinary functions as
-// email senders. If f is a function with the appropriate signature, SendFunc(f)
-// is a Sender object that calls f.
-type SendFunc func(from string, to []string, msg io.WriterTo) error
+// The sendFunc type is an adapter to allow the use of ordinary functions as
+// email senders. If f is a function with the appropriate signature, sendFunc(f)
+// is a sender object that calls f.
+type sendFunc func(ctx context.Context, from string, to []string, msg io.WriterTo) error
 
-// Send calls f(from, to, msg).
-func (f SendFunc) Send(from string, to []string, msg io.WriterTo) error {
-	return f(from, to, msg)
+func (f sendFunc) Send(ctx context.Context, from string, to []string, msg io.WriterTo) error {
+	return f(ctx, from, to, msg)
 }
 
-// Send sends emails using the given Sender.
-func Send(s Sender, msg ...*Message) error {
+// sendAll sends emails using the given sender.
+func sendAll(ctx context.Context, s sender, msg ...*Message) error {
 	for i, m := range msg {
-		if err := send(s, m); err != nil {
+		if err := send(ctx, s, m); err != nil {
 			return fmt.Errorf("gomail: could not send email %d: %v", i+1, err)
 		}
 	}
@@ -43,7 +43,7 @@ func Send(s Sender, msg ...*Message) error {
 	return nil
 }
 
-func send(s Sender, m *Message) error {
+func send(ctx context.Context, s sender, m *Message) error {
 	from, err := m.getFrom()
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func send(s Sender, m *Message) error {
 		return err
 	}
 
-	if err := s.Send(from, to, m); err != nil {
+	if err := s.Send(ctx, from, to, m); err != nil {
 		return err
 	}
 

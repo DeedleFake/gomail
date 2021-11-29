@@ -2,13 +2,13 @@ package gomail
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
 	"net/smtp"
 	"reflect"
 	"testing"
-	"time"
 )
 
 const (
@@ -248,7 +248,7 @@ func doTestSendMail(t *testing.T, d *Dialer, want []string, timeout bool) {
 		timeout: timeout,
 	}
 
-	netDialTimeout = func(network, address string, d time.Duration) (net.Conn, error) {
+	netDialContext = func(d *net.Dialer, ctx context.Context, network, address string) (net.Conn, error) {
 		if network != "tcp" {
 			t.Errorf("Invalid network, got %q, want tcp", network)
 		}
@@ -274,7 +274,7 @@ func doTestSendMail(t *testing.T, d *Dialer, want []string, timeout bool) {
 		return testClient, nil
 	}
 
-	if err := d.DialAndSend(getTestMessage()); err != nil {
+	if err := d.DialAndSend(context.TODO(), getTestMessage()); err != nil {
 		t.Error(err)
 	}
 }

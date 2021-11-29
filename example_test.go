@@ -1,10 +1,9 @@
 package gomail_test
 
 import (
-	"fmt"
+	"context"
 	"html/template"
 	"io"
-	"log"
 	"time"
 
 	"github.com/DeedleFake/gomail"
@@ -21,83 +20,86 @@ func Example() {
 
 	d := gomail.NewDialer("smtp.example.com", 587, "user", "123456")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// Send the email to Bob, Cora and Dan.
-	if err := d.DialAndSend(m); err != nil {
+	if err := d.DialAndSend(ctx, m); err != nil {
 		panic(err)
 	}
 }
 
 // A daemon that listens to a channel and sends all incoming messages.
-func Example_daemon() {
-	ch := make(chan *gomail.Message)
-
-	go func() {
-		d := gomail.NewDialer("smtp.example.com", 587, "user", "123456")
-
-		var s gomail.SendCloser
-		var err error
-		open := false
-		for {
-			select {
-			case m, ok := <-ch:
-				if !ok {
-					return
-				}
-				if !open {
-					if s, err = d.Dial(); err != nil {
-						panic(err)
-					}
-					open = true
-				}
-				if err := gomail.Send(s, m); err != nil {
-					log.Print(err)
-				}
-			// Close the connection to the SMTP server if no email was sent in
-			// the last 30 seconds.
-			case <-time.After(30 * time.Second):
-				if open {
-					if err := s.Close(); err != nil {
-						panic(err)
-					}
-					open = false
-				}
-			}
-		}
-	}()
-
-	// Use the channel in your program to send emails.
-
-	// Close the channel to stop the mail daemon.
-	close(ch)
-}
+//func Example_daemon() {
+//	ch := make(chan *gomail.Message)
+//
+//	go func() {
+//		d := gomail.NewDialer("smtp.example.com", 587, "user", "123456")
+//
+//		var s gomail.SendCloser
+//		var err error
+//		open := false
+//		for {
+//			select {
+//			case m, ok := <-ch:
+//				if !ok {
+//					return
+//				}
+//				if !open {
+//					if s, err = d.Dial(); err != nil {
+//						panic(err)
+//					}
+//					open = true
+//				}
+//				if err := gomail.Send(s, m); err != nil {
+//					log.Print(err)
+//				}
+//			// Close the connection to the SMTP server if no email was sent in
+//			// the last 30 seconds.
+//			case <-time.After(30 * time.Second):
+//				if open {
+//					if err := s.Close(); err != nil {
+//						panic(err)
+//					}
+//					open = false
+//				}
+//			}
+//		}
+//	}()
+//
+//	// Use the channel in your program to send emails.
+//
+//	// Close the channel to stop the mail daemon.
+//	close(ch)
+//}
 
 // Efficiently send a customized newsletter to a list of recipients.
-func Example_newsletter() {
-	// The list of recipients.
-	var list []struct {
-		Name    string
-		Address string
-	}
-
-	d := gomail.NewDialer("smtp.example.com", 587, "user", "123456")
-	s, err := d.Dial()
-	if err != nil {
-		panic(err)
-	}
-
-	m := gomail.NewMessage()
-	for _, r := range list {
-		m.SetHeader("From", "no-reply@example.com")
-		m.SetAddressHeader("To", r.Address, r.Name)
-		m.SetHeader("Subject", "Newsletter #1")
-		m.SetBody("text/html", fmt.Sprintf("Hello %s!", r.Name))
-
-		if err := gomail.Send(s, m); err != nil {
-			log.Printf("Could not send email to %q: %v", r.Address, err)
-		}
-		m.Reset()
-	}
-}
+//func Example_newsletter() {
+//	// The list of recipients.
+//	var list []struct {
+//		Name    string
+//		Address string
+//	}
+//
+//	d := gomail.NewDialer("smtp.example.com", 587, "user", "123456")
+//	s, err := d.Dial()
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	m := gomail.NewMessage()
+//	for _, r := range list {
+//		m.SetHeader("From", "no-reply@example.com")
+//		m.SetAddressHeader("To", r.Address, r.Name)
+//		m.SetHeader("Subject", "Newsletter #1")
+//		m.SetBody("text/html", fmt.Sprintf("Hello %s!", r.Name))
+//
+//		if err := gomail.Send(s, m); err != nil {
+//			log.Printf("Could not send email to %q: %v", r.Address, err)
+//		}
+//		m.Reset()
+//	}
+//}
 
 // Send an email using a local SMTP server.
 func Example_noAuth() {
@@ -107,35 +109,38 @@ func Example_noAuth() {
 	m.SetHeader("Subject", "Hello!")
 	m.SetBody("text/plain", "Hello!")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	d := gomail.Dialer{Host: "localhost", Port: 587}
-	if err := d.DialAndSend(m); err != nil {
+	if err := d.DialAndSend(ctx, m); err != nil {
 		panic(err)
 	}
 }
 
 // Send an email using an API or postfix.
-func Example_noSMTP() {
-	m := gomail.NewMessage()
-	m.SetHeader("From", "from@example.com")
-	m.SetHeader("To", "to@example.com")
-	m.SetHeader("Subject", "Hello!")
-	m.SetBody("text/plain", "Hello!")
-
-	s := gomail.SendFunc(func(from string, to []string, msg io.WriterTo) error {
-		// Implements you email-sending function, for example by calling
-		// an API, or running postfix, etc.
-		fmt.Println("From:", from)
-		fmt.Println("To:", to)
-		return nil
-	})
-
-	if err := gomail.Send(s, m); err != nil {
-		panic(err)
-	}
-	// Output:
-	// From: from@example.com
-	// To: [to@example.com]
-}
+//func Example_noSMTP() {
+//	m := gomail.NewMessage()
+//	m.SetHeader("From", "from@example.com")
+//	m.SetHeader("To", "to@example.com")
+//	m.SetHeader("Subject", "Hello!")
+//	m.SetBody("text/plain", "Hello!")
+//
+//	s := gomail.SendFunc(func(from string, to []string, msg io.WriterTo) error {
+//		// Implements you email-sending function, for example by calling
+//		// an API, or running postfix, etc.
+//		fmt.Println("From:", from)
+//		fmt.Println("To:", to)
+//		return nil
+//	})
+//
+//	if err := gomail.Send(s, m); err != nil {
+//		panic(err)
+//	}
+//	// Output:
+//	// From: from@example.com
+//	// To: [to@example.com]
+//}
 
 var m *gomail.Message
 

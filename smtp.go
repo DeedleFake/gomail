@@ -1,38 +1,50 @@
 package gomail
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/smtp"
 	"strings"
-	"time"
+	"sync"
 )
 
 // A Dialer is a dialer to an SMTP server.
 type Dialer struct {
 	// Host represents the host of the SMTP server.
 	Host string
+
 	// Port represents the port of the SMTP server.
 	Port int
+
 	// Username is the username to use to authenticate to the SMTP server.
 	Username string
+
 	// Password is the password to use to authenticate to the SMTP server.
 	Password string
+
 	// Auth represents the authentication mechanism used to authenticate to the
 	// SMTP server.
 	Auth smtp.Auth
+
 	// SSL defines whether an SSL connection is used. It should be false in
 	// most cases since the authentication mechanism should use the STARTTLS
 	// extension instead.
 	SSL bool
+
 	// TSLConfig represents the TLS configuration used for the TLS (when the
 	// STARTTLS extension is used) or SSL connection.
 	TLSConfig *tls.Config
+
 	// LocalName is the hostname sent to the SMTP server with the HELO command.
 	// By default, "localhost" is sent.
 	LocalName string
+
+	// Dialer is the net.Dialer used to dial new connections to the server.
+	Dialer net.Dialer
 }
 
 // NewDialer returns a new SMTP Dialer. The given parameters are used to connect
@@ -47,21 +59,29 @@ func NewDialer(host string, port int, username, password string) *Dialer {
 	}
 }
 
-// NewPlainDialer returns a new SMTP Dialer. The given parameters are used to
-// connect to the SMTP server.
-//
-// Deprecated: Use NewDialer instead.
-func NewPlainDialer(host string, port int, username, password string) *Dialer {
-	return NewDialer(host, port, username, password)
-}
-
-// Dial dials and authenticates to an SMTP server. The returned SendCloser
+// Dial dials and authenticates to an SMTP server. The returned sendCloser
 // should be closed when done using it.
-func (d *Dialer) Dial() (SendCloser, error) {
-	conn, err := netDialTimeout("tcp", addr(d.Host, d.Port), 10*time.Second)
+//
+// Expiration of the provided context after the this function returns
+// will have no effect.
+//
+// TODO: Find a way to fix context handling when sending in a way that
+// allows this to be exported again.
+func (d *Dialer) dial(ctx context.Context) (sc sendCloser, err error) {
+	conn, err := netDialContext(&d.Dialer, ctx, "tcp", addr(d.Host, d.Port))
 	if err != nil {
 		return nil, err
 	}
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
 
 	if d.SSL {
 		conn = tlsClient(conn, d.tlsConfig())
@@ -111,7 +131,7 @@ func (d *Dialer) Dial() (SendCloser, error) {
 		}
 	}
 
-	return &smtpSender{c, d}, nil
+	return &smtpSender{c, d, conn}, nil
 }
 
 func (d *Dialer) tlsConfig() *tls.Config {
@@ -127,30 +147,55 @@ func addr(host string, port int) string {
 
 // DialAndSend opens a connection to the SMTP server, sends the given emails and
 // closes the connection.
-func (d *Dialer) DialAndSend(m ...*Message) error {
-	s, err := d.Dial()
+func (d *Dialer) DialAndSend(ctx context.Context, m ...*Message) (err error) {
+	defer func() {
+		if cerr := ctx.Err(); (cerr != nil) && errors.Is(err, net.ErrClosed) {
+			err = cerr
+		}
+	}()
+
+	s, err := d.dial(ctx)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	return Send(s, m...)
+	return sendAll(ctx, s, m...)
 }
 
 type smtpSender struct {
 	smtpClient
-	d *Dialer
+	d    *Dialer
+	conn net.Conn
 }
 
-func (c *smtpSender) Send(from string, to []string, msg io.WriterTo) error {
+func (c *smtpSender) Send(ctx context.Context, from string, to []string, msg io.WriterTo) (err error) {
+	defer func() {
+		if cerr := ctx.Err(); (cerr != nil) && errors.Is(err, net.ErrClosed) {
+			err = cerr
+		}
+	}()
+
+	var closer sync.Once
+	done := make(chan struct{})
+	defer closer.Do(func() { close(done) })
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.conn.Close()
+		case <-done:
+		}
+	}()
+
 	if err := c.Mail(from); err != nil {
 		if err == io.EOF {
 			// This is probably due to a timeout, so reconnect and try again.
-			sc, derr := c.d.Dial()
+			sc, derr := c.d.dial(ctx)
 			if derr == nil {
 				if s, ok := sc.(*smtpSender); ok {
 					*c = *s
-					return c.Send(from, to, msg)
+					closer.Do(func() { close(done) })
+					return c.Send(ctx, from, to, msg)
 				}
 			}
 		}
@@ -182,7 +227,7 @@ func (c *smtpSender) Close() error {
 
 // Stubbed out for tests.
 var (
-	netDialTimeout = net.DialTimeout
+	netDialContext = (*net.Dialer).DialContext
 	tlsClient      = tls.Client
 	smtpNewClient  = func(conn net.Conn, host string) (smtpClient, error) {
 		return smtp.NewClient(conn, host)
